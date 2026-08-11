@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>URBAN STRIKE - FPS Savaş</title>
+    <style>
+        * { margin: 0; padding: 0; overflow: hidden; }
+        body { background: #000; }
+        canvas { display: block; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            text-shadow: 0 0 10px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 10;
+        }
+        #ui div { margin: 6px 0; }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(0,255,0,0.7);
+            font-size: 40px;
+            pointer-events: none;
+            z-index: 10;
+            font-family: monospace;
+            text-shadow: 0 0 6px #000;
+        }
+        #reloadText {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffaa00;
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(255,170,0,0.6);
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        #gameOver {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 20;
+            font-family: 'Courier New', monospace;
+            color: #ff3333;
+        }
+        #gameOver h1 { font-size: 72px; text-shadow: 0 0 40px #ff0000; }
+        #gameOver p { color: #fff; font-size: 24px; margin-top: 10px; }
+        #gameOver button {
+            margin-top: 30px;
+            padding: 16px 48px;
+            font-size: 22px;
+            font-family: 'Courier New', monospace;
+            background: #ff3333;
+            border: none;
+            color: #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 0 30px rgba(255,0,0,0.5);
+            transition: 0.2s;
+        }
+        #gameOver button:hover { transform: scale(1.1); background: #ff5555; }
+        #healthBar {
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 2px solid #555;
+            margin-top: 4px;
+        }
+        #healthFill {
+            width: 100%;
+            height: 100%;
+            background: #00ff00;
+            transition: width 0.15s;
+        }
+        .ammo-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .ammo-box span { font-size: 28px; font-weight: bold; color: #ffcc00; }
+        #scoreDisplay { color: #ffdd44; font-size: 22px; }
+        #waveDisplay { color: #44ccff; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div>❤️ CAN</div>
+    <div id="healthBar"><div id="healthFill"></div></div>
+    <div class="ammo-box" style="margin-top:10px;">
+        🔫 <span id="ammoText">30 / 30</span>
+    </div>
+    <div id="scoreDisplay">🏆 SKOR: 0</div>
+    <div id="waveDisplay">🌊 DALGA: 1</div>
+    <div style="margin-top:16px; font-size:14px; opacity:0.5;">WASD hareket | Fare nişan | Sol tık ateş | R doldur</div>
+</div>
+
+<div id="crosshair">+</div>
+<div id="reloadText">🔄 DOLDURULUYOR...</div>
+
+<div id="gameOver">
+    <h1>💀 ÖLDÜN</h1>
+    <p>Skorun: <span id="finalScore">0</span></p>
+    <button onclick="location.reload()">🔄 YENİDEN OYNA</button>
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// --- OYUN AYARLARI ---
+const PLAYER_SPEED = 6;
+const MOUSE_SENSITIVITY = 0.002;
+const MAX_AMMO = 30;
+const RELOAD_TIME = 1.8;
+const ENEMY_SPAWN_DIST = 25;
+const ENEMY_SPEED = 3.2;
+const ENEMY_DAMAGE = 12;
+const PLAYER_MAX_HEALTH = 100;
+const BULLET_SPEED = 60;
+const BULLET_DAMAGE = 25;
+
+// --- THREE.JS KURULUM ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a2a3a);
+scene.fog = new THREE.FogExp2(0x1a2a3a, 0.008);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 2.5, 5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+// --- IŞIKLANDIRMA ---
+const ambientLight = new THREE.AmbientLight(0x404060, 0.5);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 1.2);
+dirLight.position.set(30, 40, 20);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 80;
+dirLight.shadow.camera.left = -50;
+dirLight.shadow.camera.right = 50;
+dirLight.shadow.camera.top = 50;
+dirLight.shadow.camera.bottom = -50;
+scene.add(dirLight);
+
+const hemiLight = new THREE.HemisphereLight(0x4466aa, 0xaa8844, 0.6);
+scene.add(hemiLight);
+
+// --- ZEMİN ---
+const groundGeo = new THREE.PlaneGeometry(100, 100);
+const groundMat = new THREE.MeshStandardMaterial({ 
+    color: 0x2a3a3a, 
+    roughness: 0.8,
+    metalness: 0.1
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.1;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Izgara efekti
+const gridHelper = new THREE.GridHelper(100, 40, 0x44aaff, 0x335577);
+gridHelper.position.y = 0;
+scene.add(gridHelper);
+
+// --- BİNA / ENGEL OLUŞTUR ---
+function createBuilding(x, z, w, h, d, color = 0x556677) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.3 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, h/2, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    return mesh;
+}
+
+const buildings = [];
+buildings.push(createBuilding(-12, -8, 4, 5, 4, 0x6a7a8a));
+buildings.push(createBuilding(10, -10, 5, 6, 5, 0x5a6a7a));
+buildings.push(createBuilding(-8, 12, 6, 4, 6, 0x7a8a9a));
+buildings.push(createBuilding(14, 8, 4, 7, 4, 0x4a5a6a));
+buildings.push(createBuilding(-15, -15, 8, 3, 3, 0x8a9aaa));
+buildings.push(createBuilding(18, -5, 3, 8, 3, 0x3a4a5a));
+buildings.push(createBuilding(-5, -20, 5, 5, 5, 0x6a7a8a));
+buildings.push(createBuilding(0, 18, 7, 4, 4, 0x5a6a7a));
+// Biraz daha küçük engeller
+for(let i=0; i<20; i++) {
+    const x = (Math.random() - 0.5) * 70;
+    const z = (Math.random() - 0.5) * 70;
+    if (Math.abs(x) < 5 && Math.abs(z) < 5) continue;
+    const size = 1 + Math.random() * 2;
+    const h = 0.5 + Math.random() * 1.5;
+    const box = new THREE.Mesh(
+        new THREE.BoxGeometry(size, h, size),
+        new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.9 })
+    );
+    box.position.set(x, h/2, z);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    scene.add(box);
+    buildings.push(box);
+}
+
+// --- OYUNCU ---
+const player = {
+    mesh: null,
+    health: PLAYER_MAX_HEALTH,
+    ammo: MAX_AMMO,
+    maxAmmo: MAX_AMMO,
+    score: 0,
+    wave: 1,
+    isReloading: false,
+    reloadTimer: 0,
+    alive: true
+};
+
+// Silah (görsel)
+const gunGroup = new THREE.Group();
+const gunGeo = new THREE.BoxGeometry(0.15, 0.2, 0.8);
+const gunMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7, roughness: 0.3 });
+const gunMesh = new THREE.Mesh(gunGeo, gunMat);
+gunMesh.position.set(0.25, -0.15, -0.5);
+gunGroup.add(gunMesh);
+
+const barrelGeo = new THREE.CylinderGeometry(0.04, 0.06, 0.3);
+const barrelMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.2 });
+const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+barrel.rotation.x = Math.PI/2;
+barrel.position.set(0.25, -0.05, -0.9);
+gunGroup.add(barrel);
+
+camera.add(gunGroup);
+camera.position.set(0, 2.5, 0);
+scene.add(camera);
+
+// --- DÜŞMANLAR ---
+const enemies = [];
+const enemyBullets = [];
+
+function createEnemy() {
+    const color = 0xcc3333 + Math.floor(Math.random() * 0x222222);
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7, 1.6, 0.6),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.6 })
+    );
+    body.position.y = 0.8;
+    const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.25, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xddbb99 })
+    );
+    head.position.y = 1.7;
+    const group = new THREE.Group();
+    group.add(body);
+    group.add(head);
+    
+    // Rastgele konum
+    let x, z, safe = false;
+    let attempts = 0;
+    while(!safe && attempts < 50) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 15 + Math.random() * 25;
+        x = Math.cos(angle) * dist;
+        z = Math.sin(angle) * dist;
+        safe = Math.abs(x) > 3 || Math.abs(z) > 3;
+        // binaların içine doğmamak için
+        for(const b of buildings) {
+            const dx = x - b.position.x;
+            const dz = z - b.position.z;
+            if(Math.abs(dx) < 3 && Math.abs(dz) < 3) safe = false;
+        }
+        attempts++;
+    }
+    group.position.set(x, 0, z);
+    group.castShadow = true;
+    scene.add(group);
+    
+    return {
+        mesh: group,
+        health: 40 + Math.floor(Math.random() * 20),
+        speed: ENEMY_SPEED + (Math.random() - 0.5) * 1.2,
+        attackCooldown: 0,
+        state: 'idle', // idle, chase, attack
+        lastShot: 0,
+        hitTimer: 0
+    };
+}
+
+// --- Mermi ---
+const bullets = [];
+
+function shootBullet(from, direction, isPlayer = true) {
+    const geo = new THREE.SphereGeometry(0.08, 6, 6);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: isPlayer ? 0xffdd44 : 0xff3333,
+        emissive: isPlayer ? 0xffaa00 : 0xff0000,
+        emissiveIntensity: 0.3
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(from);
+    scene.add(mesh);
+    
+    bullets.push({
+        mesh,
+        velocity: direction.clone().multiplyScalar(isPlayer ? BULLET_SPEED : 18),
+        isPlayer,
+        life: 3,
+        damage: isPlayer ? BULLET_DAMAGE : ENEMY_DAMAGE
+    });
+}
+
+// --- KONTROLLER ---
+const keys = { w: false, a: false, s: false, d: false };
+let pitch = 0;
+let yaw = 0;
+let isPointerLocked = false;
+
+document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'r' && !player.isReloading && player.ammo < player.maxAmmo && player.alive) {
+        startReload();
+    }
+    if (e.key in keys) keys[e.key] = true;
+});
+document.addEventListener('keyup', (e) => {
+    if (e.key in keys) keys[e.key] = false;
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isPointerLocked) return;
+    yaw -= e.movementX * MOUSE_SENSITIVITY;
+    pitch -= e.movementY * MOUSE_SENSITIVITY;
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+});
+
+document.addEventListener('click', () => {
+    if (!isPointerLocked) {
+        renderer.domElement.requestPointerLock();
+        return;
+    }
+    if (player.alive && !player.isReloading && player.ammo > 0) {
+        fireBullet();
+    } else if (player.ammo === 0 && !player.isReloading && player.alive) {
+        startReload();
+    }
+});
+
+document.addEventListener('pointerlockchange', () => {
+    isPointerLocked = document.pointerLockElement === renderer.domElement;
+});
+
+// --- ATEŞ ETME ---
+function fireBullet() {
+    player.ammo--;
+    updateUI();
+    
+    const dir = new THREE.Vector3(0, 0, -1);
+    dir.applyQuaternion(camera.quaternion);
+    const origin = camera.position.clone().add(dir.clone().multiplyScalar(0.5));
+    origin.y += 0.1;
+    shootBullet(origin, dir, true);
+    
+    // Silah geri tepme efekti
+    gunMesh.position.z = -0.3;
+    setTimeout(() => gunMesh.position.z = -0.5, 80);
+    
+    // Muzzle flash
+    const flash = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.8 })
+    );
+    flash.position.copy(origin);
+    flash.position.add(dir.clone().multiplyScalar(-0.2));
+    scene.add(flash);
+    setTimeout(() => scene.remove(flash), 80);
+}
+
+function startReload() {
+    if (player.isReloading || player.ammo === player.maxAmmo) return;
+    player.isReloading = true;
+    player.reloadTimer = RELOAD_TIME;
+    document.getElementById('reloadText').style.opacity = '1';
+}
+
+function updateUI() {
+    document.getElementById('ammoText').textContent = `${player.ammo} / ${player.maxAmmo}`;
+    document.getElementById('healthFill').style.width = `${(player.health / PLAYER_MAX_HEALTH) * 100}%`;
+    document.getElementById('scoreDisplay').textContent = `🏆 SKOR: ${player.score}`;
+    document.getElementById('waveDisplay').textContent = `🌊 DALGA: ${player.wave}`;
+}
+
+// --- DÜŞMAN YÖNETİMİ ---
+let enemySpawnTimer = 0;
+let enemiesPerWave = 5;
+
+function spawnWave() {
+    const count = enemiesPerWave + (player.wave - 1) * 2;
+    for(let i=0; i<Math.min(count, 15); i++) {
+        setTimeout(() => {
+            if (player.alive && enemies.length < 30) {
+                enemies.push(createEnemy());
+            }
+        }, i * 400);
+    }
+    player.wave++;
+    updateUI();
+}
+
+// --- OYUN DÖNGÜSÜ ---
+const clock = new THREE.Clock();
+
+function gameLoop() {
+    const delta = Math.min(clock.getDelta(), 0.05);
+    if (!player.alive) {
+        renderer.render(scene, camera);
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    // --- OYUNCU HAREKET ---
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    right.y = 0;
+    right.normalize();
+    
+    const move = new THREE.Vector3(0, 0, 0);
+    if (keys.w) move.add(forward);
+    if (keys.s) move.sub(forward);
+    if (keys.a) move.sub(right);
+    if (keys.d) move.add(right);
+    if (move.length() > 0) {
+        move.normalize().multiplyScalar(PLAYER_SPEED * delta);
+        camera.position.add(move);
+        // Sınır
+        camera.position.x = Math.max(-45, Math.min(45, camera.position.x));
+        camera.position.z = Math.max(-45, Math.min(45, camera.position.z));
+    }
+
+    // --- YENİDEN DOLDURMA ---
+    if (player.isReloading) {
+        player.reloadTimer -= delta;
+        document.getElementById('reloadText').style.opacity = '1';
+        if (player.reloadTimer <= 0) {
+            player.ammo = player.maxAmmo;
+            player.isReloading = false;
+            document.getElementById('reloadText').style.opacity = '0';
+            updateUI();
+        }
+    }
+
+    // --- MERMİ GÜNCELLE ---
+    for(let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.mesh.position.add(b.velocity.clone().multiplyScalar(delta));
+        b.life -= delta;
+        
+        // Düşmanlara çarpma
+        if (b.isPlayer) {
+            for(let e of enemies) {
+                if (!e.mesh) continue;
+                const dist = b.mesh.position.distanceTo(e.mesh.position);
+                if (dist < 1.2) {
+                    e.health -= b.damage;
+                    e.hitTimer = 0.2;
+                    scene.remove(b.mesh);
+                    bullets.splice(i, 1);
+                    if (e.health <= 0) {
+                        scene.remove(e.mesh);
+                        const idx = enemies.indexOf(e);
+                        if (idx > -1) enemies.splice(idx, 1);
+                        player.score++;
+                        updateUI();
+                        // Skor patlaması efekti
+                        const part = new THREE.Mesh(
+                            new THREE.SphereGeometry(0.3, 6, 6),
+                            new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.6 })
+                        );
+                        part.position.copy(e.mesh.position);
+                        scene.add(part);
+                        setTimeout(() => scene.remove(part), 200);
+                    }
+                    break;
+                }
+            }
+        } else {
+            // Düşman mermisi oyuncuya çarpıyor
+            const dist = b.mesh.position.distanceTo(camera.position);
+            if (dist < 0.8) {
+                player.health -= b.damage;
+                scene.remove(b.mesh);
+                bullets.splice(i, 1);
+                updateUI();
+                if (player.health <= 0) {
+                    player.alive = false;
+                    document.getElementById('finalScore').textContent = player.score;
+                    document.getElementById('gameOver').style.display = 'flex';
+                }
+                continue;
+            }
+        }
+        
+        if (b.life <= 0 || b.mesh.position.length() > 70) {
+            scene.remove(b.mesh);
+            bullets.splice(i, 1);
+        }
+    }
+
+    // --- DÜŞMAN AI ---
+    for(let e of enemies) {
+        if (!e.mesh) continue;
+        const toPlayer = camera.position.clone().sub(e.mesh.position);
+        const dist = toPlayer.length();
+        toPlayer.y = 0;
+        
+        // Düşman hasar görme efekti
+        if (e.hitTimer > 0) {
+            e.hitTimer -= delta;
+            e.mesh.children[0].material.color.setHex(0xff0000);
+        } else {
+            e.mesh.children[0].material.color.setHex(0xcc3333);
+        }
+        
+        if (dist < 2.5) {
+            // Yakın saldırı
+            e.attackCooldown -= delta;
+            if (e.attackCooldown <= 0) {
+                player.health -= 8;
+                e.attackCooldown = 1.2;
+                updateUI();
+                if (player.health <= 0) {
+                    player.alive = false;
+                    document.getElementById('finalScore').textContent = player.score;
+                    document.getElementById('gameOver').style.display = 'flex';
+                }
+            }
+        } else if (dist < 35) {
+            // Uzaktan ateş
+            const lookTarget = camera.position.clone();
+            lookTarget.y = e.mesh.position.y + 0.8;
+            e.mesh.lookAt(lookTarget);
+            
+            e.lastShot -= delta;
+            if (e.lastShot <= 0 && dist < 30) {
+                const dir = toPlayer.clone().normalize();
+                const origin = e.mesh.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+                shootBullet(origin, dir, false);
+                e.lastShot = 0.8 + Math.random() * 0.6;
+            }
+            
+            // Hareket (oyuncuya doğru yürü)
+            if (dist > 4) {
+                const moveDir = toPlayer.clone().normalize();
+                e.mesh.position.add(moveDir.multiplyScalar(e.speed * delta * 0.5));
+            }
+        }
+        
+        // Düşmanı sınırla
+        e.mesh.position.x = Math.max(-45, Math.min(45, e.mesh.position.x));
+        e.mesh.position.z = Math.max(-45, Math.min(45, e.mesh.position.z));
+    }
+
+    // --- DÜŞMAN SPAWN ---
+    enemySpawnTimer -= delta;
+    if (enemySpawnTimer <= 0 && enemies.length < 20 + player.wave * 3) {
+        if (Math.random() < 0.15) {
+            enemies.push(createEnemy());
+        }
+        enemySpawnTimer = 0.5 + Math.random() * 0.5;
+    }
+
+    // Her 20 saniyede bir yeni dalga
+    if (Math.floor(clock.elapsedTime / 20) > player.wave - 2 && enemies.length < 15) {
+        spawnWave();
+    }
+
+    // UI'ı güncelle (can, mermi)
+    updateUI();
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(gameLoop);
+}
+
+// --- PENCERE BOYUTU ---
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- BAŞLAT ---
+spawnWave();
+updateUI();
+gameLoop();
+
+console.log('🔥 URBAN STRIKE başladı! WASD + Fare + Sol tık ateş');
+</script>
+</body>
+  </html>
